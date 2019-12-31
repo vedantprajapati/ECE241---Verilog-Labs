@@ -1,0 +1,270 @@
+module FSM(
+	input clk,
+	input start,
+	input reset,
+	input check,
+	input correct,//Internal
+	input timeover,//Internal
+	input check_done,//Internal
+	output reg RNG_enable,//Internal
+	output reg STORE_enable,//Internal
+	output reg CHECK_enable,//Internal
+	output reg COUNTER_enable,//Internal
+	output reg TIMER_enable//Internal
+	);
+	
+	reg [5:0] current_state, next_state;
+	
+	localparam   WAIT_BEGIN         = 5'd0,
+                BEGIN_WAIT_STATE   = 5'd1,
+                BEGIN              = 5'd2,//Not necessary should remove
+                RNG   				  = 5'd3,
+                STORE_BEGIN        = 5'd4,
+                DISPLAY_INFO   	  = 5'd5,
+                CHECK_WAIT_STATE   = 5'd6,
+                CHECK   			  = 5'd7,
+                REDISPLAY_INFO     = 5'd8,
+                SCORE_COUNTER      = 5'd9,
+                END_SCREEN         = 5'd10,
+					 RESET_WAIT_STATE   = 5'd11;
+
+	
+	always@(*)
+	begin: state_table
+		case(current_state)
+			WAIT_BEGIN: begin	
+							if(start==1)
+								next_state=BEGIN_WAIT_STATE;
+							else if(timeover==1)
+									 next_state=END_SCREEN;	 									 
+							else
+								next_state=WAIT_BEGIN;
+							end
+			BEGIN_WAIT_STATE: begin
+									if(start==0)
+										next_state=BEGIN;
+									else if(timeover==1)
+										next_state=END_SCREEN;
+									else
+										next_state=BEGIN_WAIT_STATE;
+									end
+			BEGIN: begin
+					if(timeover==1) 
+						next_state=END_SCREEN;
+					 else
+						next_state=RNG;
+					end
+			RNG: begin
+					if(timeover==1) 
+					  next_state=END_SCREEN;
+				  else
+					  next_state=STORE_BEGIN;
+					end
+			STORE_BEGIN: begin
+							if(timeover==1) 
+								 next_state=END_SCREEN;
+							 else
+								 next_state=DISPLAY_INFO;
+							end
+			DISPLAY_INFO: begin
+							  if(reset==1)
+								  next_state=RESET_WAIT_STATE;
+							  else if(check==1)
+								  next_state=CHECK_WAIT_STATE;
+							  else if(timeover==1)
+								  next_state=END_SCREEN;
+							  else
+								  next_state=DISPLAY_INFO;
+							end
+			RESET_WAIT_STATE: begin
+									if(reset==0)
+									   next_state=WAIT_BEGIN;
+									else if(timeover==1)
+										next_state=END_SCREEN;
+									else
+										next_state=RESET_WAIT_STATE;
+									end
+			CHECK_WAIT_STATE: begin
+									if(check==0)
+									   next_state=CHECK;
+									else if(timeover==1)
+										next_state=END_SCREEN;
+									else
+										next_state=CHECK_WAIT_STATE;
+									end
+			CHECK: begin
+					 if(correct==1 && check_done==1)
+						 next_state=SCORE_COUNTER;
+					 else if(correct==0 && check_done==1)
+						 next_state=REDISPLAY_INFO;
+					 else if(timeover==1)
+						next_state=END_SCREEN;
+					 else
+						next_state=CHECK;
+					end
+			SCORE_COUNTER: begin
+								if(timeover==1)
+									 next_state=END_SCREEN;
+								else
+									next_state=RNG;
+								end
+			REDISPLAY_INFO: begin
+								 if(check==1)
+								   next_state=CHECK_WAIT_STATE;
+								 else if(timeover==1)
+									 next_state=END_SCREEN;
+								 else
+									 next_state=REDISPLAY_INFO;
+									end
+			END_SCREEN: begin
+							if(reset==1)
+								next_state=RESET_WAIT_STATE;
+							else if(start==1)
+							   next_state=BEGIN_WAIT_STATE;
+							else if(timeover==1)
+								next_state=END_SCREEN;
+							else
+								next_state=END_SCREEN;
+							end
+			default: next_state=WAIT_BEGIN;
+		endcase
+	end
+	
+	always@(*)
+	begin: enable_signals
+	
+		//initializing variables
+		RNG_enable=0;
+		STORE_enable=0;
+		CHECK_enable=0;
+		COUNTER_enable=0;
+		TIMER_enable=1;
+		
+		case(current_state)
+				WAIT_BEGIN: begin
+					TIMER_enable<=0;
+					end
+				BEGIN_WAIT_STATE: begin
+					TIMER_enable<=0;
+					end
+				RNG: begin
+					RNG_enable<=1;
+					end
+				STORE_BEGIN: begin
+					STORE_enable<=1;
+					end
+				//DISPLAY_INFO: begin//Have to do
+				//REDISPLAY_INFO: begin//Have to do
+				CHECK: begin
+					CHECK_enable<=1;
+					end
+				SCORE_COUNTER: begin
+					COUNTER_enable<=1;
+					end
+				END_SCREEN: begin
+					TIMER_enable<=0;
+					end
+			endcase
+	end
+	
+	always@(posedge clk)
+	begin: state_FFs
+		if(reset==1)
+			current_state<=WAIT_BEGIN;
+		else
+			current_state<=next_state;
+	end
+endmodule
+
+module datapath(
+input clk,
+input RNG_enable,//Internal
+input STORE_enable,//Internal
+input reset,
+input CHECK_enable,//Internal
+input COUNTER_enable,//Internal
+input TIMER_enable,//Internal
+input [4:0] input_answer_A,//Internal
+input [4:0] input_answer_B,//Internal
+output reg correct,//Internal
+output reg check_done,//Internal
+output reg timeover,//Internal
+output [3:0] A_stored,//Used for top level
+output [3:0] B_stored,//Used for top level
+output [1:0] op_select_stored,//Used for top level
+output [4:0] op_num_stored//Used for top level
+);
+
+	//wire [1:0] op_select;
+	//wire [1:0] op_select_stored;
+	wire [3:0] A,B;
+	//wire reg [3:0] A_stored,B_stored;
+	wire [4:0] op_num;
+	//wire [4:0] op_num_stored;
+	wire [4:0] A_ALU_answer,B_ALU_answer;
+	wire [4:0] counter_total;
+	wire [4:0]sec_counter;
+
+	always@(posedge clk)
+	begin
+		//Initialize variables
+		correct=0;
+		check_done=0;
+		timeover=0;
+		
+		if(CHECK_enable==1)
+			begin
+				if(input_answer_A==A_ALU_answer && input_answer_B==B_ALU_answer)
+					begin
+						correct<=1;
+						check_done<=1;
+					end
+				else if(input_answer_A==A_ALU_answer && input_answer_B!=B_ALU_answer)
+					begin
+						//return some output to signify only A is right
+						check_done<=1;
+					end
+				else if(input_answer_A!=A_ALU_answer && input_answer_B==B_ALU_answer)
+					begin
+						//return some output to signify only B is right
+						check_done<=1;
+					end
+				else
+					begin
+						correct<=0;
+						check_done<=1;
+					end
+			end
+		if(sec_counter == 5'd60)
+			begin
+				timeover <= 1;
+			end
+	end
+			
+		//Have to display the information from op_select_stored, op_num_stored, A_stored, and B_stored
+			
+		//The 4 random number generators
+		LFSR4bit_A A1(clk,reset,RNG_enable,A);
+		LFSR4bit_B B1(clk,reset,RNG_enable,B);
+		LFSR_operator_select S1(clk,reset,RNG_enable,op_select);
+		LFSR_operation_number op_num_module(clk,reset,RNG_enable,op_num);//Currently using the same number and operation for both sides
+		
+		//The register storages for the 4 random number generators
+		store_A_B A_reg(A,reset,clk,STORE_enable,A_stored);
+		store_A_B B_reg(B,reset,clk,STORE_enable,B_stored);
+		store_op_select op_select_reg(op_select,reset,clk,STORE_enable,op_select_stored);
+		store_op_num op_num_reg(op_num,reset,clk,STORE_enable,op_num_stored);
+		
+		//Plug stored number into ALU
+		ALU ALU_A(A_stored,op_num_stored,op_select_stored,A_ALU_answer);
+		ALU ALU_B(B_stored,op_num_stored,op_select_stored,B_ALU_answer);
+		
+		//Score counter
+		counter C1(reset,clk,COUNTER_enable,counter_total);
+		
+		//Time counter
+		rateDivider r1(clk, reset, TIMER_enable, sec_counter);
+		
+endmodule
+			
+						 

@@ -1,0 +1,164 @@
+//Top level
+module project(input CLOCK_50,input[2:0]KEY,input [9:0]SW, output [6:0]HEX3, output [6:0]HEX5, output [9:0]LEDR);
+	wire timeover;
+	wire correct,check_done,RNG_enable,STORE_enable,CHECK_enable,COUNTER_enable,TIMER_enable;
+	wire [3:0] A_stored,B_stored;
+	FSM F1(CLOCK_50,~KEY[0],~KEY[1],~KEY[2],correct,
+			 timeover,check_done,RNG_enable,STORE_enable,CHECK_enable,COUNTER_enable,TIMER_enable);
+	datapath D1(CLOCK_50,RNG_enable,STORE_enable,~KEY[1],CHECK_enable,COUNTER_enable,TIMER_enable,
+					SW[9:5],SW[4:0],correct,check_done,timeover,A_stored,B_stored,LEDR[1:0],LEDR[9:5]);
+	segdisplay S1(A_stored,HEX5);
+	segdisplay S2(B_stored,HEX3);
+endmodule
+
+
+
+//Can implement an input seed value given by the user
+//Might have to assume the user will input seed that is enough to be workable(ie. atleast 2 1s for the first 5 and last 5 bits)
+//If can't assume might have to build a safety net
+module LFSR4bit_A(input clk,input resetn,input enable,output reg [3:0] data);
+
+reg [3:0] tempdata;
+
+always @(*) 
+begin
+  tempdata[3] = data[3]^data[0];
+  tempdata[2] = data[2]^tempdata[3];
+  tempdata[1] = data[1]^tempdata[2];
+  tempdata[0] = data[0]^tempdata[1];
+end
+
+always @(posedge clk)
+	begin
+		if(resetn == 1)
+			data <= 4'b1001;
+		else if(enable == 1)
+			data <= tempdata;
+	end
+endmodule
+
+module LFSR4bit_B(input clk,input resetn,input enable,output reg [3:0] data);
+
+reg [3:0] tempdata;
+
+always @(*) 
+begin
+  tempdata[3] = data[3]^data[0];
+  tempdata[2] = data[2]^tempdata[3];
+  tempdata[1] = data[1]^tempdata[2];
+  tempdata[0] = data[0]^tempdata[1];
+end
+
+always @(posedge clk)
+	begin
+		if(resetn == 1)
+			data <= 4'b0101;
+		else if(enable == 1)
+			data <= tempdata;
+	end
+endmodule
+
+//Dynamic input for seed of A and B
+//Can rework implementation so that both A and B takes the same seed
+module LFSR4bit_A_dyn(input clk,input resetn,input enable,input [3:0]SW,output reg [3:0] data);
+
+reg [3:0] tempdata;
+
+always @(*) 
+begin
+  tempdata[3] = data[3]^data[0];
+  tempdata[2] = data[2]^tempdata[3];
+  tempdata[1] = data[1]^tempdata[2];
+  tempdata[0] = data[0]^tempdata[1];
+end
+
+always @(posedge clk)
+	begin
+		if(resetn == 1)
+			data <= SW;
+		else if(enable == 1)
+			data <= tempdata;
+	end
+endmodule
+
+module LFSR4bit_B_dyn(input clk,input resetn,input [8:5]SW,input enable,output reg [3:0] data);
+
+reg [3:0] tempdata;
+
+always @(*) 
+begin
+  tempdata[3] = data[3]^data[0];
+  tempdata[2] = data[2]^tempdata[3];
+  tempdata[1] = data[1]^tempdata[2];
+  tempdata[0] = data[0]^tempdata[1];
+end
+
+always @(posedge clk)
+	begin
+		if(resetn == 1)
+			data <= SW;
+		else if(enable == 1)
+			data <= tempdata;
+	end
+endmodule
+
+
+//max number can add to is 16 ((15)4'b1111 + (16)5'b10000 = (31)5'b11111)
+//Minor problem with this module is that the frequency at which it displays 5'b10000 is higher than normal which makes sense
+module LFSR_operation_number(input clk,input reset,input enable,output reg [4:0] data);
+
+reg [4:0] tempdata;
+reg [4:0] temp2data;
+
+always @(*) 
+begin
+  tempdata[4] = temp2data[4]^temp2data[1];
+  tempdata[3] = temp2data[3]^temp2data[0];
+  tempdata[2] = temp2data[2]^tempdata[3];
+  tempdata[1] = temp2data[1]^tempdata[2];
+  tempdata[0] = temp2data[0]^tempdata[1];
+end
+
+always @(posedge clk)
+	begin
+		if(reset==1)
+		begin
+			data <= 5'b00101;
+			temp2data <= 5'b00101;
+		end
+		else if(enable == 1)
+			if(tempdata>5'b10000)
+			begin
+				data <= tempdata - 5'b10000;
+				temp2data <= tempdata;
+			end
+			else if(tempdata <= 5'b10000)
+			begin
+				data <= tempdata;
+				temp2data <= tempdata;
+			end
+	end
+endmodule
+
+//Can also use user input seed here
+//Use the 2 bit output as mux select for the operation in the alu
+//Disable LFSR_operator_select before preceding with ALU
+module LFSR_operator_select(input clk, input resetn, input enable, output reg [1:0] data);
+
+reg [1:0] tempdata;
+
+always @(*) 
+begin
+  tempdata[1] = data[1]^tempdata[0];
+  tempdata[0] = data[0]^data[1];
+end
+
+always @(posedge clk)
+	begin
+		if(resetn == 1)
+			data <= 2'b01;
+		else if(enable == 1)
+			data <= tempdata;
+	end
+endmodule
+
